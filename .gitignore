@@ -1,0 +1,25 @@
+# Node / JS
+node_modules/
+npm-debug.log*
+yarn-error.log
+pnpm-debug.log*
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Builds / caches
+coverage/
+dist/
+.tmp/
+.cache/
+
+# Env / secrets (handled via Secret Manager in deploy script)
+.env
+.env.*
+*.local
+
+# Docker
+*.tar
