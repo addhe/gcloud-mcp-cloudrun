@@ -75,11 +75,13 @@ SERVICE=gcloud-mcp REGION=us-central1 PROJECT_ID=my-project ./test.sh
 ```
 
 `test.sh` akan mencoba:
-- Resolve URL service via `gcloud run services describe`
-- Coba unauthenticated GET
-- Bila perlu, coba authenticated GET (menggunakan `gcloud auth print-identity-token`)
-- Coba POST dengan body `{}` dan menampilkan response
-- Jika semua gagal, menampilkan 50 baris log terakhir dari Cloud Run service (menggunakan `gcloud beta run services logs read`)
+- Resolve URL service via `gcloud run services describe`.
+- GET `/health` dan GET `/diag` (unauthenticated; jika gagal dan token tersedia, dicoba authenticated).
+- Uji jalur cepat `run_gcloud_command`:
+  - `--version` (output teks)
+  - `run services list --format=json` (output JSON)
+  - `run revisions list --service=$SERVICE --format=json` (output JSON)
+- Jika ada langkah gagal, script akan menampilkan 50 baris log terakhir via `gcloud beta run services logs read`.
 
 ## Catatan penting
 
@@ -88,6 +90,56 @@ SERVICE=gcloud-mcp REGION=us-central1 PROJECT_ID=my-project ./test.sh
   - Alternatif: jika Anda hanya perlu MCP sebagai helper tanpa akses ke `gcloud` di dalam container, Anda harus memastikan fitur yang memanggil `gcloud` tidak dieksekusi, atau mock behavior tersebut.
 
 - Desain saat ini menjalankan bundle CLI per-request (spawn). Untuk latensi lebih baik dan beban mesin lebih rendah, pertimbangkan menjalankan MCP server sebagai proses long-lived di container (jalankan bundle sekali saat container start, dan implement bridge request→stdio). Saya bisa bantu ubah `server.js` ke mode persistent jika Anda mau.
+
+## Endpoint yang tersedia
+
+- `GET /health` — mengembalikan JSON status layanan, contoh:
+
+  ```json
+  { "status": "ok", "time": "2025-09-26T12:27:34.200Z" }
+  ```
+
+- `GET /diag` — menjalankan `gcloud --version` dalam container dan mengembalikan hasilnya (text/plain).
+
+- `POST /` — HTTP wrapper yang:
+  - Jika body JSON cocok dengan pola `{"tool":"run_gcloud_command","input":{"args":[...]}}`, maka server akan menjalankan `gcloud` langsung dengan argumen tersebut dan mengembalikan hasilnya.
+  - Jika tidak, body akan dipass-through ke `npx -y @google-cloud/gcloud-mcp` sebagai stdin, dan stdout bundle akan jadi respons.
+
+### Contoh request `run_gcloud_command`
+
+Versi gcloud (teks):
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"tool":"run_gcloud_command","input":{"args":["--version"]}}' \
+  "$SERVICE_URL"/
+```
+
+Daftar layanan (JSON):
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"tool":"run_gcloud_command","input":{"args":["run","services","list","--project=YOUR_PROJECT","--region=YOUR_REGION","--format=json"]}}' \
+  "$SERVICE_URL"/ | jq .
+```
+
+Daftar revisi untuk service aktif (JSON):
+
+```bash
+curl -s -H "Content-Type: application/json" \
+  -d '{"tool":"run_gcloud_command","input":{"args":["run","revisions","list","--project=YOUR_PROJECT","--region=YOUR_REGION","--service=YOUR_SERVICE","--format=json"]}}' \
+  "$SERVICE_URL"/ | jq .
+```
+
+## Pengujian layanan privat (authenticated)
+
+Jika layanan dibuat privat (tanpa akses publik), gunakan ID token saat melakukan request:
+
+```bash
+SERVICE_URL="https://<YOUR_SERVICE_URL>"
+ID_TOKEN="$(gcloud auth print-identity-token --audiences=${SERVICE_URL})"
+curl -i -H "Authorization: Bearer ${ID_TOKEN}" "${SERVICE_URL}/health"
+```
 
 ## Troubleshooting cepat
 - Jika image tidak bisa push: periksa autentikasi Docker →

@@ -4,10 +4,10 @@ set -euo pipefail
 # test.sh
 # Quick smoke test to verify a Cloud Run deployment for gcloud-mcp.
 # - Finds the service URL via gcloud
-# - Attempts an unauthenticated GET
-# - If unauthenticated fails, attempts an authenticated GET using identity token
-# - Attempts a POST with an empty JSON body and prints output
-# - Fetches recent logs for quick diagnostics
+# - Hits /health and /diag endpoints
+# - Exercises direct gcloud path via JSON {tool: run_gcloud_command}
+# - Tries unauthenticated first; if fails, tries with identity token
+# - Fetches recent logs for quick diagnostics if any step fails
 
 SERVICE=${SERVICE:-gcloud-mcp}
 REGION=${REGION:-us-central1}
@@ -33,77 +33,85 @@ fi
 
 echo "[INFO] Service URL: $URL"
 
-# Helper to try a curl and return HTTP code and body
+# Helper to try a curl against a specific path and return HTTP code and body
 try_curl() {
   local method=${1:-GET}
   local auth_header=${2:-}
   local data=${3:-}
+  local path=${4:-/}
 
+  local target="${URL}${path}"
   if [[ -n "$auth_header" ]]; then
-    http_code=$(curl -sS -o /tmp/gcloud_mcp_test_body -w "%{http_code}" -X "$method" -H "$auth_header" -H "Content-Type: application/json" ${data:+-d "$data"} "$URL" ) || true
+    http_code=$(curl -sS -o /tmp/gcloud_mcp_test_body -w "%{http_code}" -X "$method" -H "$auth_header" -H "Content-Type: application/json" ${data:+-d "$data"} "$target" ) || true
   else
-    http_code=$(curl -sS -o /tmp/gcloud_mcp_test_body -w "%{http_code}" -X "$method" -H "Content-Type: application/json" ${data:+-d "$data"} "$URL" ) || true
+    http_code=$(curl -sS -o /tmp/gcloud_mcp_test_body -w "%{http_code}" -X "$method" -H "Content-Type: application/json" ${data:+-d "$data"} "$target" ) || true
   fi
   body=$(cat /tmp/gcloud_mcp_test_body || true)
   printf "%s\n" "$http_code"
   printf "%s\n" "$body"
 }
 
-# 1) Try unauthenticated GET
-echo "[STEP] Trying unauthenticated GET"
-read -r code body <<<"$(try_curl GET)"
-if [[ "$code" =~ ^2 ]]; then
-  echo "[PASS] Unauthenticated GET returned $code"
-  echo "Response:"; echo "$body"
-  exit 0
-fi
+# Prepare identity token (optional)
+IDTOKEN=$(gcloud auth print-identity-token 2>/dev/null || true)
 
-# 2) If 401/403, try authenticated
-if [[ "$code" == "401" || "$code" == "403" || "$code" == "404" ]]; then
-  echo "[INFO] Unauthenticated access returned $code. Trying authenticated request using identity token."
-  IDTOKEN=$(gcloud auth print-identity-token 2>/dev/null || true)
-  if [[ -z "$IDTOKEN" ]]; then
-    echo "[WARN] Could not obtain identity token (not logged in). Try: gcloud auth login && gcloud auth print-identity-token"
-  else
-    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN")"
-    if [[ "$code" =~ ^2 ]]; then
-      echo "[PASS] Authenticated GET returned $code"
-      echo "Response:"; echo "$body"
-      exit 0
-    fi
+FAIL=0
+
+# 1) GET /health
+echo "[STEP] GET /health (unauthenticated)"
+read -r code body <<<"$(try_curl GET '' '' '/health')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+if [[ ! "$code" =~ ^2 ]]; then
+  echo "[INFO] Unauth GET /health failed with $code. Trying authenticated if token available."
+  if [[ -n "$IDTOKEN" ]]; then
+    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/health')"
+    echo "[AUTH] HTTP: $code"; echo "Body:"; echo "$body"
   fi
 fi
+[[ "$code" =~ ^2 ]] || FAIL=1
 
-# 3) Try POST with empty JSON body
-echo "[STEP] Trying POST with '{}' body (unauthenticated)"
-read -r code body <<<"$(try_curl POST '' '{}')"
-if [[ "$code" =~ ^2 ]]; then
-  echo "[PASS] POST returned $code"
-  echo "Response:"; echo "$body"
-  exit 0
-fi
-
-# 4) Try POST authenticated if needed
-if [[ -n "${IDTOKEN:-}" ]]; then
-  echo "[STEP] Trying POST with '{}' body (authenticated)"
-  read -r code body <<<"$(try_curl POST "Authorization: Bearer $IDTOKEN" '{}')"
-  if [[ "$code" =~ ^2 ]]; then
-    echo "[PASS] Authenticated POST returned $code"
-    echo "Response:"; echo "$body"
-    exit 0
+# 2) GET /diag
+echo "[STEP] GET /diag (unauthenticated)"
+read -r code body <<<"$(try_curl GET '' '' '/diag')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+if [[ ! "$code" =~ ^2 ]]; then
+  echo "[INFO] Unauth GET /diag failed with $code. Trying authenticated if token available."
+  if [[ -n "$IDTOKEN" ]]; then
+    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/diag')"
+    echo "[AUTH] HTTP: $code"; echo "Body:"; echo "$body"
   fi
 fi
+[[ "$code" =~ ^2 ]] || FAIL=1
 
-# 5) All attempts failed: print diagnostics
-echo "[FAIL] All HTTP checks failed. Last HTTP code: $code"
-echo "Last response body:"; echo "$body"
+# 3) POST run_gcloud_command: --version (text output)
+echo "[STEP] POST run_gcloud_command --version"
+payload_version='{"tool":"run_gcloud_command","input":{"args":["--version"]}}'
+read -r code body <<<"$(try_curl POST '' "$payload_version" '/')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+[[ "$code" =~ ^2 ]] || FAIL=1
 
-echo "[STEP] Fetching recent logs (last 50 lines) for service '$SERVICE'"
-if ! gcloud beta --help >/dev/null 2>&1; then
-  echo "[INFO] Installing gcloud beta components (may require confirmation)"
-  yes | gcloud components install beta >/dev/null || true
+# 4) POST run_gcloud_command: services list (JSON output)
+echo "[STEP] POST run_gcloud_command services list (JSON)"
+payload_services='{"tool":"run_gcloud_command","input":{"args":["run","services","list","--project='"$PROJECT_ID"'","--region='"$REGION"'","--format=json"]}}'
+read -r code body <<<"$(try_curl POST '' "$payload_services" '/')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+[[ "$code" =~ ^2 ]] || FAIL=1
+
+# 5) POST run_gcloud_command: revisions list for current service (JSON output)
+echo "[STEP] POST run_gcloud_command revisions list (JSON)"
+payload_revisions='{"tool":"run_gcloud_command","input":{"args":["run","revisions","list","--project='"$PROJECT_ID"'","--region='"$REGION"'","--service='"$SERVICE"'","--format=json"]}}'
+read -r code body <<<"$(try_curl POST '' "$payload_revisions" '/')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+[[ "$code" =~ ^2 ]] || FAIL=1
+
+echo "[SUMMARY] FAIL=$FAIL"
+if [[ "$FAIL" -ne 0 ]]; then
+  echo "[STEP] Fetching recent logs (last 50 lines) for service '$SERVICE'"
+  if ! gcloud beta --help >/dev/null 2>&1; then
+    echo "[INFO] Installing gcloud beta components (may require confirmation)"
+    yes | gcloud components install beta >/dev/null || true
+  fi
+  gcloud beta run services logs read "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --limit=50 || true
+  exit 4
 fi
 
-gcloud beta run services logs read "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --limit=50 || true
-
-exit 4
+exit 0
