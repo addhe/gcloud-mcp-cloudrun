@@ -47,16 +47,11 @@ try_curl() {
   local path=${4:-/}
 
   local target="${URL}${path}"
-  local output
   if [[ -n "$auth_header" ]]; then
-    output=$(curl -s -w "\n%{http_code}" -X "$method" -H "$auth_header" -H "Content-Type: application/json" ${data:+-d "$data"} "$target")
+    curl -s -w "\n%{http_code}" -X "$method" -H "$auth_header" -H "Content-Type: application/json" ${data:+-d "$data"} "$target"
   else
-    output=$(curl -s -w "\n%{http_code}" -X "$method" -H "Content-Type: application/json" ${data:+-d "$data"} "$target")
+    curl -s -w "\n%{http_code}" -X "$method" -H "Content-Type: application/json" ${data:+-d "$data"} "$target"
   fi
-  http_code=$(echo "$output" | tail -n1)
-  body=$(echo "$output" | sed '$d')
-  printf "%s\n" "$http_code"
-  printf "%s\n" "$body"
 }
 
 # Prepare identity token (optional)
@@ -66,12 +61,16 @@ FAIL=0
 
 # 1) GET /health
 echo "[STEP] GET /health (unauthenticated)"
-read -r code body <<<"$(try_curl GET '' '' '/health')"
+output=$(try_curl GET '' '' '/health')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 if [[ ! "$code" =~ ^2 ]]; then
   echo "[INFO] Unauth GET /health failed with $code. Trying authenticated if token available."
   if [[ -n "$IDTOKEN" ]]; then
-    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/health')"
+    auth_output=$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/health')
+    code=$(echo "$auth_output" | tail -n1)
+    body=$(echo "$auth_output" | sed '$d')
     echo "[AUTH] HTTP: $code"; echo "Body:"; echo "$body"
   fi
 fi
@@ -79,12 +78,16 @@ fi
 
 # 2) GET /diag
 echo "[STEP] GET /diag (unauthenticated)"
-read -r code body <<<"$(try_curl GET '' '' '/diag')"
+output=$(try_curl GET '' '' '/diag')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 if [[ ! "$code" =~ ^2 ]]; then
   echo "[INFO] Unauth GET /diag failed with $code. Trying authenticated if token available."
   if [[ -n "$IDTOKEN" ]]; then
-    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/diag')"
+    auth_output=$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/diag')
+    code=$(echo "$auth_output" | tail -n1)
+    body=$(echo "$auth_output" | sed '$d')
     echo "[AUTH] HTTP: $code"; echo "Body:"; echo "$body"
   fi
 fi
@@ -92,33 +95,40 @@ fi
 
 # 3) POST run_gcloud_command: --version (text output)
 echo "[STEP] POST run_gcloud_command --version"
-payload_version='{"tool":"run_gcloud_command","input":{"args":["--version"]}}'
-read -r code body <<<"$(try_curl POST '' "$payload_version" '/')"
+output=$(try_curl POST '' '{"tool":"run_gcloud_command","input":{"args":["--version"]}}' '/')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 [[ "$code" =~ ^2 ]] || FAIL=1
 
 # 4) POST run_gcloud_command: services list (JSON output)
 echo "[STEP] POST run_gcloud_command services list (JSON)"
-payload_services='{"tool":"run_gcloud_command","input":{"args":["run","services","list","--project='"$PROJECT_ID"'","--region='"$REGION"'","--format=json"]}}'
-read -r code body <<<"$(try_curl POST '' "$payload_services" '/')"
+output=$(try_curl POST '' '{"tool":"run_gcloud_command","input":{"args":["run","services","list","--project='\''"$PROJECT_ID"'\''","--region='\''"$REGION"'\''","--format=json"]}}' '/')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 [[ "$code" =~ ^2 ]] || FAIL=1
 
 # 5) POST run_gcloud_command: revisions list for current service (JSON output)
 echo "[STEP] POST run_gcloud_command revisions list (JSON)"
-payload_revisions='{"tool":"run_gcloud_command","input":{"args":["run","revisions","list","--project='"$PROJECT_ID"'","--region='"$REGION"'","--service='"$SERVICE"'","--format=json"]}}'
-read -r code body <<<"$(try_curl POST '' "$payload_revisions" '/')"
+output=$(try_curl POST '' '{"tool":"run_gcloud_command","input":{"args":["run","revisions","list","--project='\''"$PROJECT_ID"'\''","--region='\''"$REGION"'\''","--service='\''"$SERVICE"'\''","--format=json"]}}' '/')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 [[ "$code" =~ ^2 ]] || FAIL=1
 
 # 6) GET / (unauthenticated)
 echo "[STEP] GET / (unauthenticated)"
-read -r code body <<<"$(try_curl GET '' '' '/')"
+output=$(try_curl GET '' '' '/')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 if [[ ! "$code" =~ ^2 ]]; then
   echo "[INFO] Unauth GET / failed with $code. Trying authenticated if token available."
   if [[ -n "$IDTOKEN" ]]; then
-    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/')"
+    auth_output=$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/')
+    code=$(echo "$auth_output" | tail -n1)
+    body=$(echo "$auth_output" | sed '$d')
     echo "[AUTH] HTTP: $code"; echo "Body:"; echo "$body"
   fi
 fi
@@ -126,8 +136,18 @@ fi
 
 # 7) POST run_gcloud_command: functions list (JSON output)
 echo "[STEP] POST run_gcloud_command functions list (JSON)"
-payload_functions='{"tool":"run_gcloud_command","input":{"args":["functions","list","--project='"$PROJECT_ID"'","--regions='"$REGION"'","--format=json"]}}'
-read -r code body <<<"$(try_curl POST '' "$payload_functions" '/')"
+output=$(try_curl POST '' '{"tool":"run_gcloud_command","input":{"args":["functions","list","--project='\''"$PROJECT_ID"'\''","--regions='\''"$REGION"'\''","--format=json"]}}' '/')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+[[ "$code" =~ ^2 ]] || FAIL=1
+
+# 8) POST run_gcloud_command: services list in us-central1
+echo "[STEP] POST run_gcloud_command: services list in us-central1"
+payload_svcs_us='{"tool":"run_gcloud_command","input":{"args":["run","services","list","--region","us-central1"]}}'
+output=$(try_curl POST '' "$payload_svcs_us" '/')
+code=$(echo "$output" | tail -n1)
+body=$(echo "$output" | sed '$d')
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 [[ "$code" =~ ^2 ]] || FAIL=1
 
