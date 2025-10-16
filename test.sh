@@ -103,6 +103,26 @@ read -r code body <<<"$(try_curl POST '' "$payload_revisions" '/')"
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 [[ "$code" =~ ^2 ]] || FAIL=1
 
+# 6) GET / (unauthenticated)
+echo "[STEP] GET / (unauthenticated)"
+read -r code body <<<"$(try_curl GET '' '' '/')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+if [[ ! "$code" =~ ^2 ]]; then
+  echo "[INFO] Unauth GET / failed with $code. Trying authenticated if token available."
+  if [[ -n "$IDTOKEN" ]]; then
+    read -r code body <<<"$(try_curl GET "Authorization: Bearer $IDTOKEN" '' '/')"
+    echo "[AUTH] HTTP: $code"; echo "Body:"; echo "$body"
+  fi
+fi
+[[ "$code" =~ ^2 ]] || FAIL=1
+
+# 7) POST run_gcloud_command: functions list (JSON output)
+echo "[STEP] POST run_gcloud_command functions list (JSON)"
+payload_functions='{"tool":"run_gcloud_command","input":{"args":["functions","list","--project='"$PROJECT_ID"'","--region='"$REGION"'","--format=json"]}}'
+read -r code body <<<"$(try_curl POST '' "$payload_functions" '/')"
+echo "HTTP: $code"; echo "Body:"; echo "$body"
+[[ "$code" =~ ^2 ]] || FAIL=1
+
 echo "[SUMMARY] FAIL=$FAIL"
 if [[ "$FAIL" -ne 0 ]]; then
   echo "[STEP] Fetching recent logs (last 50 lines) for service '$SERVICE'"

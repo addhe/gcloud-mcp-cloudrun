@@ -91,6 +91,40 @@ SERVICE=gcloud-mcp REGION=us-central1 PROJECT_ID=my-project ./test.sh
 
 - Desain saat ini menjalankan bundle CLI per-request (spawn). Untuk latensi lebih baik dan beban mesin lebih rendah, pertimbangkan menjalankan MCP server sebagai proses long-lived di container (jalankan bundle sekali saat container start, dan implement bridge request→stdio). Saya bisa bantu ubah `server.js` ke mode persistent jika Anda mau.
 
+## Struktur Payload
+
+Endpoint `POST /` menerima payload JSON dengan struktur spesifik untuk mengeksekusi command `gcloud`.
+
+Payload harus berupa objek JSON dengan properti berikut:
+
+- `tool`: String, harus diisi dengan `"run_gcloud_command"`.
+- `input`: Objek yang berisi:
+  - `args`: Array of strings, di mana setiap elemen adalah argumen untuk command `gcloud`.
+
+### Contoh
+
+Untuk menjalankan command `gcloud --version`, payload JSON yang dikirim adalah:
+
+```json
+{
+  "tool": "run_gcloud_command",
+  "input": {
+    "args": ["--version"]
+  }
+}
+```
+
+Untuk menjalankan command `gcloud run services list --project=my-project --format=json`:
+
+```json
+{
+  "tool": "run_gcloud_command",
+  "input": {
+    "args": ["run", "services", "list", "--project=my-project", "--format=json"]
+  }
+}
+```
+
 ## Endpoint yang tersedia
 
 - `GET /health` — mengembalikan JSON status layanan, contoh:
