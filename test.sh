@@ -41,12 +41,14 @@ try_curl() {
   local path=${4:-/}
 
   local target="${URL}${path}"
+  local output
   if [[ -n "$auth_header" ]]; then
-    http_code=$(curl -sS -o /tmp/gcloud_mcp_test_body -w "%{http_code}" -X "$method" -H "$auth_header" -H "Content-Type: application/json" ${data:+-d "$data"} "$target" ) || true
+    output=$(curl -s -w "\n%{http_code}" -X "$method" -H "$auth_header" -H "Content-Type: application/json" ${data:+-d "$data"} "$target")
   else
-    http_code=$(curl -sS -o /tmp/gcloud_mcp_test_body -w "%{http_code}" -X "$method" -H "Content-Type: application/json" ${data:+-d "$data"} "$target" ) || true
+    output=$(curl -s -w "\n%{http_code}" -X "$method" -H "Content-Type: application/json" ${data:+-d "$data"} "$target")
   fi
-  body=$(cat /tmp/gcloud_mcp_test_body || true)
+  http_code=$(echo "$output" | tail -n1)
+  body=$(echo "$output" | sed '$d')
   printf "%s\n" "$http_code"
   printf "%s\n" "$body"
 }
@@ -118,7 +120,7 @@ fi
 
 # 7) POST run_gcloud_command: functions list (JSON output)
 echo "[STEP] POST run_gcloud_command functions list (JSON)"
-payload_functions='{"tool":"run_gcloud_command","input":{"args":["functions","list","--project='"$PROJECT_ID"'","--region='"$REGION"'","--format=json"]}}'
+payload_functions='{"tool":"run_gcloud_command","input":{"args":["functions","list","--project='"$PROJECT_ID"'","--regions='"$REGION"'","--format=json"]}}'
 read -r code body <<<"$(try_curl POST '' "$payload_functions" '/')"
 echo "HTTP: $code"; echo "Body:"; echo "$body"
 [[ "$code" =~ ^2 ]] || FAIL=1
