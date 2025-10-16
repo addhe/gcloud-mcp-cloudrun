@@ -22,12 +22,18 @@ echo "[INFO] Project: $PROJECT_ID"
 echo "[INFO] Region:  $REGION"
 echo "[INFO] Service: $SERVICE"
 
-echo "[STEP] Resolving service URL"
-URL=$(gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --format="value(status.url)" 2>/dev/null || true)
+if [[ "$SERVICE" == http* ]]; then
+  echo "[INFO] SERVICE variable is a URL, using it directly."
+  URL="$SERVICE"
+else
+  echo "[INFO] SERVICE variable is a service name, resolving URL."
+  echo "[STEP] Resolving service URL"
+  URL=$(gcloud run services describe "$SERVICE" --project="$PROJECT_ID" --region="$REGION" --format="value(status.url)" 2>/dev/null || true)
+fi
 
 if [[ -z "$URL" ]]; then
-  echo "[ERROR] Could not find service '$SERVICE' in project '$PROJECT_ID' region '$REGION'."
-  echo "Run: gcloud run services list --project=$PROJECT_ID --region=$REGION"
+  echo "[ERROR] Could not resolve URL for service '$SERVICE' in project '$PROJECT_ID' region '$REGION'."
+  echo "If you provided a service name, run: gcloud run services list --project=$PROJECT_ID --region=$REGION"
   exit 3
 fi
 
